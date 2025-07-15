@@ -150,7 +150,7 @@ const (
 
 const (
 	PeMinimumTargetMajorVersion = 6
-	PeMinimumTargetMinorVersion = 1
+	PeMinimumTargetMinorVersion = 0 // Changed from 1 to 0 for Vista compatibility
 )
 
 // DOS stub that prints out

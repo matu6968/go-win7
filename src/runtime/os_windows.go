@@ -154,10 +154,10 @@ var (
 )
 
 var (
-	advapi32dll         = [...]uint16{'a', 'd', 'v', 'a', 'p', 'i', '3', '2', '.', 'd', 'l', 'l', 0}
-	ntdlldll            = [...]uint16{'n', 't', 'd', 'l', 'l', '.', 'd', 'l', 'l', 0}
-	powrprofdll         = [...]uint16{'p', 'o', 'w', 'r', 'p', 'r', 'o', 'f', '.', 'd', 'l', 'l', 0}
-	winmmdll            = [...]uint16{'w', 'i', 'n', 'm', 'm', '.', 'd', 'l', 'l', 0}
+	advapi32dll = [...]uint16{'a', 'd', 'v', 'a', 'p', 'i', '3', '2', '.', 'd', 'l', 'l', 0}
+	ntdlldll    = [...]uint16{'n', 't', 'd', 'l', 'l', '.', 'd', 'l', 'l', 0}
+	powrprofdll = [...]uint16{'p', 'o', 'w', 'r', 'p', 'r', 'o', 'f', '.', 'd', 'l', 'l', 0}
+	winmmdll    = [...]uint16{'w', 'i', 'n', 'm', 'm', '.', 'd', 'l', 'l', 0}
 )
 
 // Function to be called by windows CreateThread
@@ -455,6 +455,55 @@ func initHighResTimer() {
 //go:linkname canUseLongPaths internal/syscall/windows.CanUseLongPaths
 var canUseLongPaths bool
 
+// Windows version detection for compatibility
+var (
+	windowsVersion struct {
+		major   uint32
+		minor   uint32
+		build   uint32
+		isVista bool
+		isWin7  bool
+		isWin8  bool
+		isWin10 bool
+	}
+
+	// API availability flags
+	hasGetQueuedCompletionStatusEx bool
+	hasSetFileInformationByHandle  bool
+	hasGetFinalPathNameByHandle    bool
+	hasCreateSymbolicLink          bool
+)
+
+// initWindowsVersion detects Windows version and sets compatibility flags
+func initWindowsVersion() {
+	info := _OSVERSIONINFOW{}
+	info.osVersionInfoSize = uint32(unsafe.Sizeof(info))
+	stdcall1(_RtlGetVersion, uintptr(unsafe.Pointer(&info)))
+
+	windowsVersion.major = info.majorVersion
+	windowsVersion.minor = info.minorVersion
+	windowsVersion.build = info.buildNumber
+
+	// Determine Windows version
+	if windowsVersion.major == 6 && windowsVersion.minor == 0 {
+		windowsVersion.isVista = true
+	} else if windowsVersion.major == 6 && windowsVersion.minor == 1 {
+		windowsVersion.isWin7 = true
+	} else if windowsVersion.major == 6 && windowsVersion.minor >= 2 {
+		windowsVersion.isWin8 = true
+	} else if windowsVersion.major >= 10 {
+		windowsVersion.isWin10 = true
+	}
+
+	// Set API availability flags
+	// Vista (6.0) and later support these APIs
+	isVistaOrLater := windowsVersion.major > 6 || (windowsVersion.major == 6 && windowsVersion.minor >= 0)
+	hasGetQueuedCompletionStatusEx = isVistaOrLater // Available on Vista and later
+	hasSetFileInformationByHandle = isVistaOrLater  // Available on Vista and later
+	hasGetFinalPathNameByHandle = isVistaOrLater    // Available on Vista and later
+	hasCreateSymbolicLink = isVistaOrLater          // Available on Vista and later
+}
+
 // initLongPathSupport enables long path support.
 func initLongPathSupport() {
 	const (
@@ -463,10 +512,7 @@ func initLongPathSupport() {
 	)
 
 	// Check that we're ≥ 10.0.15063.
-	info := _OSVERSIONINFOW{}
-	info.osVersionInfoSize = uint32(unsafe.Sizeof(info))
-	stdcall1(_RtlGetVersion, uintptr(unsafe.Pointer(&info)))
-	if info.majorVersion < 10 || (info.majorVersion == 10 && info.minorVersion == 0 && info.buildNumber < 15063) {
+	if windowsVersion.major < 10 || (windowsVersion.major == 10 && windowsVersion.minor == 0 && windowsVersion.build < 15063) {
 		return
 	}
 
@@ -483,6 +529,9 @@ func osinit() {
 	asmstdcallAddr = unsafe.Pointer(abi.FuncPCABI0(asmstdcall))
 
 	loadOptionalSyscalls()
+
+	// Initialize Windows version detection for compatibility
+	initWindowsVersion()
 
 	preventErrorDialogs()
 
@@ -917,6 +966,7 @@ func unminit() {
 // resources in minit, semacreate, or elsewhere. Do not take locks after calling this.
 //
 // This always runs without a P, so //go:nowritebarrierrec is required.
+//
 //go:nowritebarrierrec
 //go:nosplit
 func mdestroy(mp *m) {
