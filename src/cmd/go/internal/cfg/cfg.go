@@ -13,6 +13,7 @@ import (
 	"go/build"
 	"internal/buildcfg"
 	"internal/cfg"
+	"internal/platform"
 	"io"
 	"io/fs"
 	"os"
@@ -140,37 +141,39 @@ func defaultContext() build.Context {
 	// Recreate that logic here with the new GOOS/GOARCH setting.
 	// We need to run steps 2 and 3 to determine what the default value
 	// of CgoEnabled would be for computing CGOChanged.
-	defaultCgoEnabled := ctxt.CgoEnabled
-	if ctxt.GOOS != runtime.GOOS || ctxt.GOARCH != runtime.GOARCH {
-		defaultCgoEnabled = false
-	} else {
-		// Use built-in default cgo setting for GOOS/GOARCH.
-		// Note that ctxt.GOOS/GOARCH are derived from the preference list
-		// (1) environment, (2) go/env file, (3) runtime constants,
-		// while go/build.Default.GOOS/GOARCH are derived from the preference list
-		// (1) environment, (2) runtime constants.
-		//
-		// We know ctxt.GOOS/GOARCH == runtime.GOOS/GOARCH;
-		// no matter how that happened, go/build.Default will make the
-		// same decision (either the environment variables are set explicitly
-		// to match the runtime constants, or else they are unset, in which
-		// case go/build falls back to the runtime constants), so
-		// go/build.Default.GOOS/GOARCH == runtime.GOOS/GOARCH.
-		// So ctxt.CgoEnabled (== go/build.Default.CgoEnabled) is correct
-		// as is and can be left unmodified.
-		//
-		// All that said, starting in Go 1.20 we layer one more rule
-		// on top of the go/build decision: if CC is unset and
-		// the default C compiler we'd look for is not in the PATH,
-		// we automatically default cgo to off.
-		// This makes go builds work automatically on systems
-		// without a C compiler installed.
-		if ctxt.CgoEnabled {
-			if os.Getenv("CC") == "" {
-				cc := DefaultCC(ctxt.GOOS, ctxt.GOARCH)
-				if _, err := pathcache.LookPath(cc); err != nil {
-					defaultCgoEnabled = false
-				}
+	defaultCgoEnabled := false
+	if buildcfg.DefaultCGO_ENABLED == "1" {
+		defaultCgoEnabled = true
+	} else if buildcfg.DefaultCGO_ENABLED == "0" {
+	} else if runtime.GOARCH == ctxt.GOARCH && runtime.GOOS == ctxt.GOOS {
+		defaultCgoEnabled = platform.CgoSupported(ctxt.GOOS, ctxt.GOARCH)
+	}
+	// Use built-in default cgo setting for GOOS/GOARCH.
+	// Note that ctxt.GOOS/GOARCH are derived from the preference list
+	// (1) environment, (2) go/env file, (3) runtime constants,
+	// while go/build.Default.GOOS/GOARCH are derived from the preference list
+	// (1) environment, (2) runtime constants.
+	//
+	// We know ctxt.GOOS/GOARCH == runtime.GOOS/GOARCH;
+	// no matter how that happened, go/build.Default will make the
+	// same decision (either the environment variables are set explicitly
+	// to match the runtime constants, or else they are unset, in which
+	// case go/build falls back to the runtime constants), so
+	// go/build.Default.GOOS/GOARCH == runtime.GOOS/GOARCH.
+	// So ctxt.CgoEnabled (== go/build.Default.CgoEnabled) is correct
+	// as is and can be left unmodified.
+	//
+	// All that said, starting in Go 1.20 we layer one more rule
+	// on top of the go/build decision: if CC is unset and
+	// the default C compiler we'd look for is not in the PATH,
+	// we automatically default cgo to off.
+	// This makes go builds work automatically on systems
+	// without a C compiler installed.
+	if defaultCgoEnabled {
+		if os.Getenv("CC") == "" {
+			cc := DefaultCC(ctxt.GOOS, ctxt.GOARCH)
+			if _, err := pathcache.LookPath(cc); err != nil {
+				defaultCgoEnabled = false
 			}
 		}
 	}
